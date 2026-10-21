@@ -1,0 +1,11 @@
+services:
+  homeprinter:
+    build: .
+    image: homeprinter
+    ports:
+      - "8000:8000"
+    environment:
+      # mDNS (.local) names don't resolve inside a container, so use the IP.
+      # Reserve this address for the printer in your router's DHCP settings.
+      PRINTER_HOST: ${PRINTER_HOST:-192.168.0.126}
+    restart: unless-stopped

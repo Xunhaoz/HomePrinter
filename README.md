@@ -23,6 +23,16 @@ uv run homeprinter            # listens on 0.0.0.0:8000, API docs at /docs
 
 There is no authentication: anyone on the LAN who can reach the port can print.
 
+### Docker
+
+```bash
+docker compose up -d --build
+```
+
+`.local` names don't resolve inside the container, so [compose.yaml](compose.yaml) passes the
+printer's IP (`PRINTER_HOST`, default `192.168.0.126`). Reserve that IP for the printer in the
+router's DHCP settings, or override it: `PRINTER_HOST=192.168.0.50 docker compose up -d`.
+
 ## API
 
 | | |
