@@ -50,6 +50,10 @@ async def print_file(
     color_mode: Annotated[Literal["auto", "color", "monochrome"] | None, Form()] = None,
     quality: Annotated[Literal["normal", "high"] | None, Form()] = None,
     scaling: Annotated[Literal["auto", "auto-fit", "fit", "fill", "none"], Form()] = "fit",
+    sides: Annotated[
+        Literal["one-sided", "two-sided-long-edge", "two-sided-short-edge"],
+        Form(description="PDF only; long-edge for portrait booklets, short-edge for flip-up pages"),
+    ] = "one-sided",
     pages: Annotated[str | None, Form(description="PDF only, e.g. 1-3,5")] = None,
     dry_run: Annotated[bool, Form(description="Validate with the printer without printing")] = False,
 ):
@@ -59,15 +63,22 @@ async def print_file(
     if len(data) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(413, f"file is larger than {settings.max_upload_mb} MB")
 
-    options = PrintOptions(copies=copies, media=media, color_mode=color_mode, quality=quality, scaling=scaling)
+    options = PrintOptions(
+        copies=copies, media=media, color_mode=color_mode, quality=quality, scaling=scaling,
+        sides=None if sides == "one-sided" else sides,
+    )
     filename = file.filename or "upload"
     try:
         if convert.is_pdf(data):
             page_list = convert.parse_page_ranges(pages, convert.pdf_page_count(data))
+            if media:
+                convert.media_size_mm(media)  # reject unknown sizes before queueing
             job = Job(filename=filename, kind="pdf", data=data, options=options, pages=page_list, dry_run=dry_run)
         else:
             if pages:
                 raise convert.UnsupportedFile("'pages' only applies to PDFs")
+            if options.sides:
+                raise convert.UnsupportedFile("two-sided printing needs a PDF; the printer prints photos one-sided")
             jpeg = await asyncio.to_thread(convert.image_to_jpeg, data, settings.jpeg_quality)
             job = Job(filename=filename, kind="image", data=jpeg, options=options, pages=[0], dry_run=dry_run)
     except convert.UnsupportedFile as exc:
