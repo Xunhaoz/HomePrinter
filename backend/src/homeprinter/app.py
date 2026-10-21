@@ -5,13 +5,14 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
 
-from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import convert
+from .auth import COOKIE, Auth
 from .config import settings
 from .db import Storage
 from .jobs import Job, JobManager, build_job
@@ -21,6 +22,7 @@ from .scans import ScanService, scan_to_dict
 from .schedules import ScheduleError, ScheduleService, schedule_to_dict
 
 log = logging.getLogger(__name__)
+auth = Auth(settings)
 storage = Storage(settings.data_dir)
 scanner = ScannerClient(settings)
 printer = PrinterClient(settings)
@@ -43,6 +45,15 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="HomePrinter", lifespan=lifespan)
+
+
+def require_session(request: Request) -> None:
+    if not auth.valid(request.cookies.get(COOKIE)):
+        raise HTTPException(401, "login required")
+
+
+# Everything except login and the health check needs a session.
+api = APIRouter(dependencies=[Depends(require_session)])
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -96,19 +107,47 @@ def print_form(
 PrintForm = Annotated[dict[str, Any], Depends(print_form)]
 
 
+# --- auth ----------------------------------------------------------------------
+
+@app.get("/health", include_in_schema=False)
+async def health():
+    return {"ok": True}
+
+
+@app.get("/auth/session")
+async def session(request: Request):
+    """Whether this browser is logged in, and whether a login is needed at all."""
+    return {"auth_required": auth.enabled, "authenticated": auth.valid(request.cookies.get(COOKIE))}
+
+
+@app.post("/auth/login", status_code=204)
+async def login(request: Request, response: Response, code: Annotated[str, Body(embed=True, max_length=64)]):
+    """Exchange the access code for a session cookie; 429 after too many wrong codes."""
+    if not auth.enabled:
+        return
+    if not auth.check_code(code, request.client.host if request.client else "unknown"):
+        raise HTTPException(401, "wrong code")
+    auth.set_cookie(request, response)
+
+
+@app.post("/auth/logout", status_code=204)
+async def logout(response: Response):
+    auth.clear_cookie(response)
+
+
 # --- printer -----------------------------------------------------------------
 
-@app.get("/printer")
+@api.get("/printer")
 async def printer_status():
     return await _printer_call(printer.status())
 
 
-@app.get("/printer/capabilities")
+@api.get("/printer/capabilities")
 async def printer_capabilities():
     return await _printer_call(printer.capabilities())
 
 
-@app.post("/print", status_code=202)
+@api.post("/print", status_code=202)
 async def print_file(
     file: Annotated[UploadFile, File(description="PDF or image (JPEG, PNG, HEIC, ...)")],
     form: PrintForm,
@@ -121,7 +160,7 @@ async def print_file(
     return jobs.submit(job).to_dict()
 
 
-@app.get("/jobs")
+@api.get("/jobs")
 async def list_jobs():
     return [job.to_dict() for job in sorted(jobs.jobs.values(), key=lambda j: j.created_at, reverse=True)]
 
@@ -133,12 +172,12 @@ def _get_job(job_id: str) -> Job:
     return job
 
 
-@app.get("/jobs/{job_id}")
+@api.get("/jobs/{job_id}")
 async def get_job(job_id: str):
     return _get_job(job_id).to_dict()
 
 
-@app.delete("/jobs/{job_id}")
+@api.delete("/jobs/{job_id}")
 async def cancel_job(job_id: str):
     job = _get_job(job_id)
     await jobs.cancel(job)
@@ -147,7 +186,7 @@ async def cancel_job(job_id: str):
 
 # --- print schedules -----------------------------------------------------------
 
-@app.post("/print-schedule", status_code=201)
+@api.post("/print-schedule", status_code=201)
 async def create_schedule(
     file: Annotated[UploadFile, File(description="PDF or image to print on schedule")],
     form: PrintForm,
@@ -172,12 +211,12 @@ async def create_schedule(
     return schedule_to_dict(schedule)
 
 
-@app.get("/print-schedule")
+@api.get("/print-schedule")
 async def list_schedules():
     return [schedule_to_dict(s) for s in await schedules.list()]
 
 
-@app.get("/print-schedule/{schedule_id}")
+@api.get("/print-schedule/{schedule_id}")
 async def get_schedule(schedule_id: str):
     schedule = await schedules.get(schedule_id)
     if schedule is None:
@@ -185,7 +224,7 @@ async def get_schedule(schedule_id: str):
     return schedule_to_dict(schedule)
 
 
-@app.patch("/print-schedule/{schedule_id}")
+@api.patch("/print-schedule/{schedule_id}")
 async def update_schedule(
     schedule_id: str,
     enabled: Annotated[bool | None, Body(embed=True)] = None,
@@ -201,7 +240,7 @@ async def update_schedule(
     return schedule_to_dict(schedule)
 
 
-@app.post("/print-schedule/{schedule_id}/run")
+@api.post("/print-schedule/{schedule_id}/run")
 async def run_schedule_now(schedule_id: str):
     """Print the schedule's document right away, without changing its timetable."""
     schedule = await schedules.run_now(schedule_id)
@@ -212,7 +251,7 @@ async def run_schedule_now(schedule_id: str):
     return schedule_to_dict(schedule)
 
 
-@app.delete("/print-schedule/{schedule_id}", status_code=204)
+@api.delete("/print-schedule/{schedule_id}", status_code=204)
 async def delete_schedule(schedule_id: str):
     if not await schedules.delete(schedule_id):
         raise HTTPException(404, "schedule not found")
@@ -220,7 +259,7 @@ async def delete_schedule(schedule_id: str):
 
 # --- scanner -----------------------------------------------------------------
 
-@app.get("/scanner")
+@api.get("/scanner")
 async def scanner_status():
     try:
         status, caps = await asyncio.gather(scanner.status(), scanner.capabilities())
@@ -229,7 +268,7 @@ async def scanner_status():
     return {**status, "busy": scanner.busy, "sources": {name: vars(c) for name, c in caps.items()}}
 
 
-@app.post("/scan", status_code=202)
+@api.post("/scan", status_code=202)
 async def scan(
     source: Annotated[Literal["flatbed", "feeder"], Form(description="feeder = the document feeder (ADF)")] = "flatbed",
     color_mode: Annotated[Literal["color", "grayscale", "bw"], Form()] = "color",
@@ -245,7 +284,7 @@ async def scan(
     return scan_to_dict(job, settings.default_timezone)
 
 
-@app.get("/scans")
+@api.get("/scans")
 async def list_scans():
     return [scan_to_dict(job, settings.default_timezone) for job in await scans.list()]
 
@@ -257,12 +296,12 @@ async def _get_scan(scan_id: str):
     return job
 
 
-@app.get("/scans/{scan_id}")
+@api.get("/scans/{scan_id}")
 async def get_scan(scan_id: str):
     return scan_to_dict(await _get_scan(scan_id), settings.default_timezone)
 
 
-@app.get(
+@api.get(
     "/scans/{scan_id}/file",
     response_class=FileResponse,
     responses={200: {"content": {"application/pdf": {}, "image/jpeg": {}, "application/zip": {}}}},
@@ -278,7 +317,7 @@ async def download_scan(scan_id: str):
                         headers={"X-Scan-Pages": str(job.pages)})
 
 
-@app.delete("/scans/{scan_id}", status_code=204)
+@api.delete("/scans/{scan_id}", status_code=204)
 async def delete_scan(scan_id: str):
     try:
         found = await scans.delete(scan_id)
@@ -286,3 +325,6 @@ async def delete_scan(scan_id: str):
         raise HTTPException(exc.http_status, str(exc)) from exc
     if not found:
         raise HTTPException(404, "scan not found")
+
+
+app.include_router(api)

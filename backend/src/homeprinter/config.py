@@ -23,6 +23,9 @@ class Settings:
     # Schedules without an explicit timezone use this one.
     default_timezone: str = os.environ.get("DEFAULT_TIMEZONE", "Asia/Taipei")
     scan_retention_days: int = int(os.environ.get("SCAN_RETENTION_DAYS", "7"))
+    # Shared login code, e.g. six letters, case-insensitive; empty = no login.
+    access_code: str = os.environ.get("ACCESS_CODE", "")
+    session_days: int = int(os.environ.get("SESSION_DAYS", "30"))
 
 
 settings = Settings()

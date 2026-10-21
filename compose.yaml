@@ -1,18 +1,34 @@
 services:
-  homeprinter:
-    build: .
-    image: homeprinter
-    ports:
-      - "8000:8000"
+  backend:
+    build: ./backend
+    image: homeprinter-backend
+    # Not published: only the web container talks to it. Uncomment for direct LAN access.
+    # ports:
+    #   - "8000:8000"
     environment:
+      # Login code for the web app (and the API). Required, since the app may face the internet.
+      ACCESS_CODE: ${ACCESS_CODE:?set ACCESS_CODE in .env (see .env.example)}
+      SESSION_DAYS: ${SESSION_DAYS:-30}
       # mDNS (.local) names don't resolve inside a container, so use the IP.
       # Reserve this address for the printer in your router's DHCP settings.
       PRINTER_HOST: ${PRINTER_HOST:-192.168.0.126}
       # Schedules are evaluated in DEFAULT_TIMEZONE; TZ only affects log times.
       DEFAULT_TIMEZONE: Asia/Taipei
       TZ: Asia/Taipei
+      # nginx serves the API under /api, and is the only client, so trust its X-Forwarded-For.
+      ROOT_PATH: /api
+      FORWARDED_ALLOW_IPS: "*"
     volumes:
       - homeprinter-data:/data  # SQLite database, scheduled documents, scans
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    image: homeprinter-web
+    ports:
+      - "${WEB_PORT:-8088}:80"
+    depends_on:
+      - backend
     restart: unless-stopped
 
 volumes:

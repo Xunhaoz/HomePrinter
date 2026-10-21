@@ -1,0 +1,214 @@
+// Typed client for the HomePrinter backend; see docs/api.md.
+// Everything goes through /api, which Vite (dev) and nginx (Docker) forward to the backend.
+
+const BASE = "/api"
+
+export class ApiError extends Error {
+  status: number
+  retryAfter: number | null
+
+  constructor(status: number, message: string, retryAfter: number | null = null) {
+    super(message)
+    this.status = status
+    this.retryAfter = retryAfter
+  }
+}
+
+// App.tsx listens for this to show the login screen when a session expires.
+export const UNAUTHORIZED_EVENT = "homeprinter:unauthorized"
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(BASE + path, { credentials: "same-origin", ...init })
+  } catch {
+    throw new ApiError(0, "連不到伺服器，請檢查網路")
+  }
+  if (!res.ok) {
+    let message = res.statusText
+    try {
+      const body = await res.json()
+      message = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail)
+    } catch {
+      // not JSON (e.g. a proxy error page)
+    }
+    if (res.status === 401 && !path.startsWith("/auth/")) {
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+    }
+    const retry = res.headers.get("Retry-After")
+    throw new ApiError(res.status, message, retry ? Number(retry) : null)
+  }
+  if (res.status === 204) return undefined as T
+  return res.json() as Promise<T>
+}
+
+function json(method: string, body: unknown): RequestInit {
+  return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+}
+
+function form(fields: Record<string, string | number | boolean | Blob | null | undefined>): RequestInit {
+  const data = new FormData()
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === null || value === undefined || value === "") continue
+    data.append(key, value instanceof Blob ? value : String(value))
+  }
+  return { method: "POST", body: data }
+}
+
+// --- types -------------------------------------------------------------------
+
+export type Session = { auth_required: boolean; authenticated: boolean }
+
+export type Ink = { name: string; level: number; color: string }
+
+export type PrinterStatus = {
+  model: string | null
+  state: "idle" | "processing" | "stopped" | "unknown"
+  state_reasons: string[]
+  message: string | null
+  media_ready: string | string[] | null
+  ink: Ink[]
+}
+
+export type Capabilities = {
+  media: string[]
+  media_default: string | null
+  color_modes: string[]
+  qualities: string[]
+  scaling: string[]
+  sides_pdf: string[]
+}
+
+export type ColorMode = "auto" | "color" | "monochrome"
+export type Quality = "normal" | "high"
+export type Scaling = "fit" | "fill" | "none"
+export type Sides = "one-sided" | "two-sided-long-edge" | "two-sided-short-edge"
+
+export type PrintOptions = {
+  copies: number
+  media?: string | null
+  color_mode?: ColorMode | null
+  quality?: Quality | null
+  scaling: Scaling
+  sides: Sides
+  pages?: string | null
+  dry_run?: boolean
+}
+
+export type JobStatus = "queued" | "rendering" | "printing" | "completed" | "failed" | "canceled"
+
+export type Job = {
+  id: string
+  filename: string
+  kind: "pdf" | "image"
+  status: JobStatus
+  dry_run: boolean
+  pages: number[] | null
+  copies: number
+  sides: Sides
+  pages_done: number
+  pages_total: number
+  printer_job_id: number | null
+  error: string | null
+  created_at: number // epoch seconds
+  finished_at: number | null
+}
+
+export type Schedule = {
+  id: string
+  name: string
+  kind: "once" | "cron"
+  run_at: string | null
+  cron: string | null
+  timezone: string
+  enabled: boolean
+  next_run_at: string | null
+  filename: string
+  options: PrintOptions
+  last_run_at: string | null
+  last_status: "submitted" | "failed" | "missed" | null
+  last_error: string | null
+  last_job: string | null
+  created_at: string
+}
+
+export type ScheduleInput = {
+  kind: "once" | "cron"
+  name?: string
+  run_at?: string
+  cron?: string
+  timezone?: string
+}
+
+export type ScanSource = "flatbed" | "feeder"
+export type ScanColor = "color" | "grayscale" | "bw"
+export type ScanFormat = "pdf" | "jpeg"
+export type ScanSize = "a4" | "letter" | "legal" | "max"
+
+export type ScanSettings = {
+  source: ScanSource
+  color_mode: ScanColor
+  resolution: number
+  format: ScanFormat
+  size: ScanSize
+}
+
+export type SourceCaps = {
+  max_width: number
+  max_height: number
+  resolutions: number[]
+  color_modes: string[]
+  formats: string[]
+}
+
+export type ScannerStatus = {
+  state: string | null
+  adf_state: string | null
+  busy: boolean
+  sources: Partial<Record<ScanSource, SourceCaps>>
+}
+
+export type Scan = ScanSettings & {
+  id: string
+  status: "scanning" | "completed" | "failed"
+  filename: string | null
+  media_type: string | null
+  pages: number | null
+  size_bytes: number | null
+  error: string | null
+  created_at: string
+  finished_at: string | null
+  expires_at: string
+  download: string | null
+}
+
+// --- endpoints -----------------------------------------------------------------
+
+export const api = {
+  session: () => request<Session>("/auth/session"),
+  login: (code: string) => request<void>("/auth/login", json("POST", { code })),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+
+  printer: () => request<PrinterStatus>("/printer"),
+  capabilities: () => request<Capabilities>("/printer/capabilities"),
+
+  print: (file: File, options: PrintOptions) => request<Job>("/print", form({ file, ...options })),
+  jobs: () => request<Job[]>("/jobs"),
+  getJob: (id: string) => request<Job>(`/jobs/${id}`),
+  cancelJob: (id: string) => request<Job>(`/jobs/${id}`, { method: "DELETE" }),
+
+  schedules: () => request<Schedule[]>("/print-schedule"),
+  createSchedule: (file: File, options: PrintOptions, schedule: ScheduleInput) =>
+    request<Schedule>("/print-schedule", form({ file, ...options, ...schedule })),
+  updateSchedule: (id: string, patch: { enabled?: boolean; name?: string }) =>
+    request<Schedule>(`/print-schedule/${id}`, json("PATCH", patch)),
+  runSchedule: (id: string) => request<Schedule>(`/print-schedule/${id}/run`, { method: "POST" }),
+  deleteSchedule: (id: string) => request<void>(`/print-schedule/${id}`, { method: "DELETE" }),
+
+  scanner: () => request<ScannerStatus>("/scanner"),
+  scan: (settings: ScanSettings) => request<Scan>("/scan", form(settings)),
+  scans: () => request<Scan[]>("/scans"),
+  getScan: (id: string) => request<Scan>(`/scans/${id}`),
+  deleteScan: (id: string) => request<void>(`/scans/${id}`, { method: "DELETE" }),
+  scanFileUrl: (id: string) => `${BASE}/scans/${id}/file`,
+}

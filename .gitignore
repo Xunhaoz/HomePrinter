@@ -14,3 +14,7 @@ wheels/
 
 # Local data (database and stored files)
 data/
+
+# Frontend
+node_modules/
+frontend/dist/

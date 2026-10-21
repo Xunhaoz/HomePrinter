@@ -11,4 +11,6 @@ def main() -> None:
         "homeprinter.app:app",
         host=os.environ.get("HOST", "0.0.0.0"),
         port=int(os.environ.get("PORT", "8000")),
+        # /api when a reverse proxy serves the API under that prefix, so /docs works there.
+        root_path=os.environ.get("ROOT_PATH", ""),
     )

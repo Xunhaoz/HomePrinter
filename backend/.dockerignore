@@ -3,6 +3,5 @@
 .env
 **/__pycache__
 Dockerfile
-compose.yaml
 data
 tests
