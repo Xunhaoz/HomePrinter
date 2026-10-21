@@ -1,16 +1,21 @@
 """HTTP API: printer status, print uploads, and job tracking."""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import convert
 from .config import settings
 from .jobs import Job, JobManager
 from .printer import PrinterClient, PrinterError, PrintOptions
 
+log = logging.getLogger(__name__)
 printer = PrinterClient(settings)
 jobs = JobManager(printer, settings)
 
@@ -23,6 +28,19 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="HomePrinter", lifespan=lifespan)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def log_http_error(request: Request, exc: StarletteHTTPException):
+    if exc.status_code >= 400 and exc.status_code != 404:  # 404s are mostly browsers asking for favicon.ico
+        log.warning("%s %s -> %d: %s", request.method, request.url.path, exc.status_code, exc.detail)
+    return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def log_validation_error(request: Request, exc: RequestValidationError):
+    log.warning("%s %s -> 422: %s", request.method, request.url.path, exc.errors())
+    return await request_validation_exception_handler(request, exc)
 
 
 async def _printer_call(coro):
@@ -46,7 +64,11 @@ async def printer_capabilities():
 async def print_file(
     file: Annotated[UploadFile, File(description="PDF or image (JPEG, PNG, HEIC, ...)")],
     copies: Annotated[int, Form(ge=1, le=99)] = 1,
-    media: Annotated[str | None, Form(description="e.g. iso_a4_210x297mm, na_index-4x6_4x6in")] = None,
+    # Explicit examples: otherwise Swagger UI pre-fills optional strings with "string".
+    media: Annotated[
+        str | None,
+        Form(description="e.g. iso_a4_210x297mm, na_index-4x6_4x6in", examples=["iso_a4_210x297mm"]),
+    ] = None,
     color_mode: Annotated[Literal["auto", "color", "monochrome"] | None, Form()] = None,
     quality: Annotated[Literal["normal", "high"] | None, Form()] = None,
     scaling: Annotated[Literal["auto", "auto-fit", "fit", "fill", "none"], Form()] = "fit",
@@ -54,7 +76,7 @@ async def print_file(
         Literal["one-sided", "two-sided-long-edge", "two-sided-short-edge"],
         Form(description="PDF only; long-edge for portrait booklets, short-edge for flip-up pages"),
     ] = "one-sided",
-    pages: Annotated[str | None, Form(description="PDF only, e.g. 1-3,5")] = None,
+    pages: Annotated[str | None, Form(description="PDF only, e.g. 1-3,5; empty for all", examples=[""])] = None,
     dry_run: Annotated[bool, Form(description="Validate with the printer without printing")] = False,
 ):
     data = await file.read()
