@@ -1,6 +1,7 @@
 # HomePrinter
 
-FastAPI service that prints PDFs and photos on the EPSON L6490 over IPP (pyipp), without CUPS.
+FastAPI service that prints PDFs and photos on the EPSON L6490 over IPP (pyipp), and scans
+with its built-in scanner over eSCL (AirScan), without CUPS or SANE.
 
 The printer accepts JPEG, PWG raster and URF, but not PDF, so:
 - photos (JPEG, PNG, HEIC, ...) are converted to JPEG, with EXIF rotation applied, and printed one-sided;
@@ -21,6 +22,7 @@ uv run pytest                 # encoder and layout tests
 |---|---|---|
 | `PRINTER_HOST` | `EPSONE62DA3.local` | mDNS name or IP; names resolve to IPv4 |
 | `HOST` / `PORT` | `0.0.0.0` / `8000` | where the API listens |
+| `SCANNER_PORT` / `SCANNER_PATH` | `443` / `/eSCL` | eSCL endpoint, HTTPS |
 | `PDF_DPI` | `300` | PDF raster resolution (the printer takes 300 or 600) |
 | `JPEG_QUALITY` | `92` | |
 | `MAX_UPLOAD_MB` | `100` | |
@@ -46,6 +48,8 @@ router's DHCP settings, or override it: `PRINTER_HOST=192.168.0.50 docker compos
 | `POST /print` | multipart upload, returns a job (202) |
 | `GET /jobs`, `GET /jobs/{id}` | job status and `pages_done` / `pages_total` |
 | `DELETE /jobs/{id}` | cancel |
+| `GET /scanner` | scanner state, feeder state, and what each source supports |
+| `POST /scan` | scan and return the file |
 
 `POST /print` form fields:
 
@@ -67,3 +71,25 @@ curl -F file=@doc.pdf -F sides=two-sided-long-edge -F color_mode=monochrome loca
 ```
 
 Jobs are kept in memory and lost on restart.
+
+### Scanning
+
+`POST /scan` form fields, all optional:
+
+| field | values |
+|---|---|
+| `source` | `flatbed` (default) or `feeder` (the document feeder, one-sided only) |
+| `color_mode` | `color` (default), `grayscale`, `bw` |
+| `resolution` | `100`, `200`, `300` (default), `600`; `1200` on the flatbed only |
+| `format` | `pdf` (default) or `jpeg` |
+| `size` | `a4` (default), `letter`, `legal`, `max` (whole scan area) |
+
+The request waits until the scan is done (about 15-30 s at 100-300 dpi) and returns the file
+as an attachment; `X-Scan-Pages` says how many pages it holds. Feeder scans with several pages
+come back as one PDF, or as a zip of JPEGs. The flatbed scans whatever is on the glass. One
+scan runs at a time; a second gets 409, as does a feeder scan with no paper loaded.
+
+```bash
+curl -OJ -F color_mode=grayscale localhost:8000/scan
+curl -OJ -F source=feeder -F format=pdf localhost:8000/scan
+```

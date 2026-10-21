@@ -1,7 +1,6 @@
 """Thin async wrapper around pyipp for the one printer this service drives."""
 
 import asyncio
-import ipaddress
 import socket
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ from pyipp.serializer import encode_dict
 from pyipp.tags import ATTRIBUTE_TAG_MAP
 
 from .config import Settings
+from .net import resolve_ipv4
 
 # pyipp silently drops attributes missing from its tag map, so register the
 # ones we send. "media" is a keyword per RFC 8011; pyipp maps it to name.
@@ -106,18 +106,10 @@ class PrinterClient:
         self.settings = settings
 
     async def _resolve_host(self) -> str:
-        host = self.settings.printer_host
         try:
-            ipaddress.ip_address(host)
-            return host
-        except ValueError:
-            pass
-        loop = asyncio.get_running_loop()
-        try:
-            infos = await loop.getaddrinfo(host, self.settings.printer_port, family=socket.AF_INET)
+            return await resolve_ipv4(self.settings.printer_host, self.settings.printer_port)
         except socket.gaierror as exc:
-            raise PrinterError(f"cannot resolve printer host {host!r}") from exc
-        return infos[0][4][0]
+            raise PrinterError(f"cannot resolve printer host {self.settings.printer_host!r}") from exc
 
     async def _execute(self, operation: IppOperation, message: dict[str, Any], timeout: int = 15) -> dict[str, Any]:
         host = await self._resolve_host()

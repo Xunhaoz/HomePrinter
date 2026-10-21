@@ -2,10 +2,11 @@
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -14,8 +15,10 @@ from . import convert
 from .config import settings
 from .jobs import Job, JobManager
 from .printer import PrinterClient, PrinterError, PrintOptions
+from .scanner import ScannerClient, ScannerError
 
 log = logging.getLogger(__name__)
+scanner = ScannerClient(settings)
 printer = PrinterClient(settings)
 jobs = JobManager(printer, settings)
 
@@ -107,6 +110,42 @@ async def print_file(
         raise HTTPException(400, str(exc)) from exc
 
     return jobs.submit(job).to_dict()
+
+
+@app.get("/scanner")
+async def scanner_status():
+    try:
+        status, caps = await asyncio.gather(scanner.status(), scanner.capabilities())
+    except ScannerError as exc:
+        raise HTTPException(exc.http_status, str(exc)) from exc
+    return {**status, "sources": {name: vars(c) for name, c in caps.items()}}
+
+
+@app.post(
+    "/scan",
+    response_class=Response,
+    responses={200: {"description": "The scanned file", "content": {
+        "application/pdf": {}, "image/jpeg": {}, "application/zip": {},
+    }}},
+)
+async def scan(
+    source: Annotated[Literal["flatbed", "feeder"], Form(description="feeder = the document feeder (ADF)")] = "flatbed",
+    color_mode: Annotated[Literal["color", "grayscale", "bw"], Form()] = "color",
+    resolution: Annotated[int, Form(description="dpi: 100, 200, 300, 600; 1200 on the flatbed only")] = 300,
+    format: Annotated[Literal["pdf", "jpeg"], Form(description="multi-page feeder scans as JPEG come back zipped")] = "pdf",
+    size: Annotated[Literal["a4", "letter", "legal", "max"], Form(description="max = the whole scan area")] = "a4",
+):
+    """Scan and return the file once the scanner is done (can take a minute at high dpi)."""
+    try:
+        result = await scanner.scan(source, color_mode, resolution, format, size)
+    except ScannerError as exc:
+        raise HTTPException(exc.http_status, str(exc)) from exc
+    filename = time.strftime(f"scan-%Y%m%d-%H%M%S.{result.extension}")
+    return Response(
+        result.content,
+        media_type=result.media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "X-Scan-Pages": str(result.pages)},
+    )
 
 
 @app.get("/jobs")

@@ -11,6 +11,9 @@ class Settings:
     printer_host: str = os.environ.get("PRINTER_HOST", "EPSONE62DA3.local")
     printer_port: int = int(os.environ.get("PRINTER_PORT", "631"))
     printer_path: str = os.environ.get("PRINTER_PATH", "/ipp/print")
+    # eSCL (AirScan) on the same device; the L6490 serves it over HTTPS.
+    scanner_port: int = int(os.environ.get("SCANNER_PORT", "443"))
+    scanner_path: str = os.environ.get("SCANNER_PATH", "/eSCL")
     pdf_dpi: int = int(os.environ.get("PDF_DPI", "300"))
     jpeg_quality: int = int(os.environ.get("JPEG_QUALITY", "92"))
     max_upload_mb: int = int(os.environ.get("MAX_UPLOAD_MB", "100"))
