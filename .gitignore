@@ -11,3 +11,6 @@ wheels/
 
 # Local config
 .env
+
+# Local data (database and stored files)
+data/

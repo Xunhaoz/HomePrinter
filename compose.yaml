@@ -8,4 +8,12 @@ services:
       # mDNS (.local) names don't resolve inside a container, so use the IP.
       # Reserve this address for the printer in your router's DHCP settings.
       PRINTER_HOST: ${PRINTER_HOST:-192.168.0.126}
+      # Schedules are evaluated in DEFAULT_TIMEZONE; TZ only affects log times.
+      DEFAULT_TIMEZONE: Asia/Taipei
+      TZ: Asia/Taipei
+    volumes:
+      - homeprinter-data:/data  # SQLite database, scheduled documents, scans
     restart: unless-stopped
+
+volumes:
+  homeprinter-data:

@@ -67,7 +67,20 @@ class ScanResult:
 class ScannerClient:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self._lock = asyncio.Lock()
+        self._reserved = False
+
+    @property
+    def busy(self) -> bool:
+        return self._reserved
+
+    def reserve(self) -> None:
+        """Claim the scanner; synchronous so two requests can't both get in."""
+        if self._reserved:
+            raise ScannerError("scanner is busy with another scan", 409)
+        self._reserved = True
+
+    def release(self) -> None:
+        self._reserved = False
 
     async def _request(
         self, method: str, path: str, body: str | None = None, timeout: int = 30
@@ -115,26 +128,29 @@ class ScannerClient:
             )
         return caps
 
-    async def scan(self, source: Source, color_mode: ColorMode, resolution: int, fmt: Format, size: Size) -> ScanResult:
-        if self._lock.locked():
-            raise ScannerError("scanner is busy with another scan", 409)
-        async with self._lock:
-            caps = (await self.capabilities()).get(source)
-            if caps is None:
-                raise ScannerError(f"this scanner has no {source}", 400)
-            if resolution not in caps.resolutions:
-                raise ScannerError(f"{source} supports {caps.resolutions} dpi, not {resolution}", 400)
-            if COLOR_MODES[color_mode] not in caps.color_modes or FORMATS[fmt] not in caps.formats:
-                raise ScannerError(f"{source} can't scan {color_mode} as {fmt}", 400)
+    async def prepare(self, source: Source, color_mode: ColorMode, resolution: int, fmt: Format, size: Size) -> str:
+        """Validate the request against the scanner and its current state; returns the job XML.
 
-            state = await self.status()
-            if state["state"] != "Idle":
-                raise ScannerError(f"scanner is {state['state']}", 409)
-            if source == "feeder" and state["adf_state"] != "ScannerAdfLoaded":
-                raise ScannerError("the document feeder is empty", 409)
+        Call with the scanner reserved, so the state can't change before run().
+        """
+        caps = (await self.capabilities()).get(source)
+        if caps is None:
+            raise ScannerError(f"this scanner has no {source}", 400)
+        if resolution not in caps.resolutions:
+            raise ScannerError(f"{source} supports {caps.resolutions} dpi, not {resolution}", 400)
+        if COLOR_MODES[color_mode] not in caps.color_modes or FORMATS[fmt] not in caps.formats:
+            raise ScannerError(f"{source} can't scan {color_mode} as {fmt}", 400)
 
-            documents = await self._run_job(self._settings_xml(caps, source, color_mode, resolution, fmt, size), source)
-        return _combine(documents, fmt)
+        state = await self.status()
+        if state["state"] != "Idle":
+            raise ScannerError(f"scanner is {state['state']}", 409)
+        if source == "feeder" and state["adf_state"] != "ScannerAdfLoaded":
+            raise ScannerError("the document feeder is empty", 409)
+        return self._settings_xml(caps, source, color_mode, resolution, fmt, size)
+
+    async def run(self, settings_xml: str, source: Source, fmt: Format) -> ScanResult:
+        documents = await self._run_job(settings_xml, source)
+        return await asyncio.to_thread(_combine, documents, fmt)
 
     def _settings_xml(self, caps: SourceCaps, source: Source, color_mode: ColorMode,
                       resolution: int, fmt: Format, size: Size) -> str:

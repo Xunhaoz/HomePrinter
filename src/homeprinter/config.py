@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,11 @@ class Settings:
     pdf_dpi: int = int(os.environ.get("PDF_DPI", "300"))
     jpeg_quality: int = int(os.environ.get("JPEG_QUALITY", "92"))
     max_upload_mb: int = int(os.environ.get("MAX_UPLOAD_MB", "100"))
+    # SQLite database and stored files (schedule documents, scans).
+    data_dir: Path = Path(os.environ.get("DATA_DIR", "data"))
+    # Schedules without an explicit timezone use this one.
+    default_timezone: str = os.environ.get("DEFAULT_TIMEZONE", "Asia/Taipei")
+    scan_retention_days: int = int(os.environ.get("SCAN_RETENTION_DAYS", "7"))
 
 
 settings = Settings()

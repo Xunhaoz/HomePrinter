@@ -74,6 +74,34 @@ class JobCanceled(Exception):
     pass
 
 
+async def build_job(data: bytes, filename: str, form: dict[str, Any], jpeg_quality: int) -> Job:
+    """Validate an upload plus /print form fields and turn it into a Job.
+
+    Raises convert.UnsupportedFile for anything the printer can't take, so
+    callers can reject it before queueing (or before saving a schedule).
+    """
+    sides = form.get("sides") or "one-sided"
+    options = PrintOptions(
+        copies=form.get("copies", 1), media=form.get("media"), color_mode=form.get("color_mode"),
+        quality=form.get("quality"), scaling=form.get("scaling") or "fit",
+        sides=None if sides == "one-sided" else sides,
+    )
+    pages, dry_run = form.get("pages"), bool(form.get("dry_run"))
+    if not data:
+        raise convert.UnsupportedFile("empty file")
+    if convert.is_pdf(data):
+        page_list = convert.parse_page_ranges(pages, convert.pdf_page_count(data))
+        if options.media:
+            convert.media_size_mm(options.media)  # reject unknown sizes before queueing
+        return Job(filename=filename, kind="pdf", data=data, options=options, pages=page_list, dry_run=dry_run)
+    if pages:
+        raise convert.UnsupportedFile("'pages' only applies to PDFs")
+    if options.sides:
+        raise convert.UnsupportedFile("two-sided printing needs a PDF; the printer prints photos one-sided")
+    jpeg = await asyncio.to_thread(convert.image_to_jpeg, data, jpeg_quality)
+    return Job(filename=filename, kind="image", data=jpeg, options=options, pages=[0], dry_run=dry_run)
+
+
 class JobManager:
     def __init__(self, printer: PrinterClient, settings: Settings):
         self.printer = printer

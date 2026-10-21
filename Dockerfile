@@ -17,9 +17,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.12-slim-bookworm
 
-RUN useradd --system --no-create-home app
+# /data holds the SQLite database and stored files; a fresh named volume
+# mounted there inherits this ownership, so the non-root user can write it.
+RUN useradd --system --no-create-home app && mkdir /data && chown app:app /data
 COPY --from=build /app/.venv /app/.venv
-ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1
+ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1 DATA_DIR=/data
 
 USER app
 EXPOSE 8000

@@ -4,3 +4,5 @@
 **/__pycache__
 Dockerfile
 compose.yaml
+data
+tests
