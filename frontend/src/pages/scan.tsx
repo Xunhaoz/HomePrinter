@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import {
   CheckCircle2Icon, DownloadIcon, FileArchiveIcon, FileTextIcon, ImageIcon, InboxIcon, Loader2Icon, ScanLineIcon,
-  Share2Icon, Trash2Icon,
+  Trash2Icon,
 } from "lucide-react"
 import { toast } from "sonner"
 import { ApiError, api, type Scan, type ScanSettings } from "@/lib/api"
 import { errorMessage, formatBytes, formatWhen, relativeDays } from "@/lib/format"
-import { cn } from "@/lib/utils"
 import { usePoll } from "@/hooks/use-poll"
 import { EmptyState, Field, PageHeader, SectionTitle, Segmented, StatusBadge } from "@/components/common"
 import {
@@ -211,12 +210,9 @@ export function ScanPage() {
   )
 }
 
-// The scan just started: shows progress, then a result card with share and download.
+// The scan just started: shows progress, then a result card with a download button.
 function CurrentScan({ scan, onDismiss }: { scan: Scan; onDismiss: () => void }) {
   const [elapsed, setElapsed] = useState(0)
-  const [file, setFile] = useState<File>()
-  const [previewUrl, setPreviewUrl] = useState<string>()
-  const fetched = useRef(false)
 
   useEffect(() => {
     if (scan.status !== "scanning") return
@@ -224,23 +220,6 @@ function CurrentScan({ scan, onDismiss }: { scan: Scan; onDismiss: () => void })
     const timer = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 500)
     return () => clearInterval(timer)
   }, [scan.status, scan.created_at])
-
-  // iOS only lets navigator.share run inside the tap, so download the file ahead of time.
-  useEffect(() => {
-    if (scan.status !== "completed" || fetched.current) return
-    fetched.current = true
-    fetch(api.scanFileUrl(scan.id))
-      .then((r) => (r.ok ? r.blob() : Promise.reject()))
-      .then((blob) => {
-        setFile(new File([blob], scan.filename ?? "scan", { type: scan.media_type ?? blob.type }))
-        if (scan.media_type === "image/jpeg") setPreviewUrl(URL.createObjectURL(blob))
-      })
-      .catch(() => undefined)
-  }, [scan])
-
-  useEffect(() => () => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
-  }, [previewUrl])
 
   if (scan.status === "scanning") {
     return (
@@ -270,22 +249,11 @@ function CurrentScan({ scan, onDismiss }: { scan: Scan; onDismiss: () => void })
     )
   }
 
-  const canShare = !!file && typeof navigator.canShare === "function" && navigator.canShare({ files: [file] })
-
-  async function share() {
-    if (!file) return
-    try {
-      await navigator.share({ files: [file], title: file.name })
-    } catch (err) {
-      if ((err as Error).name !== "AbortError") toast.error("分享失敗")
-    }
-  }
-
   return (
     <Card className="overflow-hidden py-0">
-      {previewUrl && (
+      {scan.media_type === "image/jpeg" && (
         <div className="flex max-h-80 items-center justify-center bg-muted">
-          <img src={previewUrl} alt="掃描結果" className="max-h-80 w-full object-contain" />
+          <img src={api.scanFileUrl(scan.id)} alt="掃描結果" className="max-h-80 w-full object-contain" />
         </div>
       )}
       <CardContent className="space-y-4 py-4">
@@ -298,20 +266,12 @@ function CurrentScan({ scan, onDismiss }: { scan: Scan; onDismiss: () => void })
             </p>
           </div>
         </div>
-        <div className={cn("grid gap-2", canShare ? "grid-cols-2" : "grid-cols-1")}>
-          {canShare && (
-            <Button className="h-11" onClick={share}>
-              <Share2Icon />
-              分享／儲存
-            </Button>
-          )}
-          <Button asChild variant={canShare ? "outline" : "default"} className="h-11">
-            <a href={api.scanFileUrl(scan.id)} download={scan.filename ?? undefined}>
-              <DownloadIcon />
-              下載
-            </a>
-          </Button>
-        </div>
+        <Button asChild className="h-11 w-full">
+          <a href={api.scanFileUrl(scan.id)} download={scan.filename ?? undefined}>
+            <DownloadIcon />
+            下載
+          </a>
+        </Button>
       </CardContent>
     </Card>
   )
