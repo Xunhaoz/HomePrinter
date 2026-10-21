@@ -1,26 +1,11 @@
-import { useEffect, useState } from "react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
 
-// shadcn's version reads the theme from next-themes; this app just follows the system setting.
-function useSystemTheme(): "light" | "dark" {
-  const query = "(prefers-color-scheme: dark)"
-  const [dark, setDark] = useState(() => window.matchMedia(query).matches)
-  useEffect(() => {
-    const mq = window.matchMedia(query)
-    const onChange = () => setDark(mq.matches)
-    mq.addEventListener("change", onChange)
-    return () => mq.removeEventListener("change", onChange)
-  }, [])
-  return dark ? "dark" : "light"
-}
-
+// shadcn's version reads the theme from next-themes; this app is always light.
 const Toaster = ({ ...props }: ToasterProps) => {
-  const theme = useSystemTheme()
-
   return (
     <Sonner
-      theme={theme}
+      theme="light"
       className="toaster group"
       offset={{ top: "calc(env(safe-area-inset-top) + 12px)" }}
       mobileOffset={{ top: "calc(env(safe-area-inset-top) + 12px)" }}
