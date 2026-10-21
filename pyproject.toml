@@ -1,0 +1,25 @@
+[project]
+name = "homeprinter"
+version = "0.1.0"
+description = "Print PDFs and photos on a LAN IPP printer (pyipp + FastAPI)"
+readme = "README.md"
+authors = [
+    { name = "xunhaoz", email = "leo20020529@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.156.4",
+    "pillow>=13.0.0",
+    "pillow-heif>=1.8.1",
+    "pyipp>=0.17.2",
+    "pymupdf>=2.0",
+    "python-multipart>=0.0.32",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+homeprinter = "homeprinter:main"
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"
