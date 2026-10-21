@@ -8,10 +8,10 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Body, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response as RawResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import convert
+from . import convert, testpage
 from .auth import COOKIE, Auth
 from .config import settings
 from .db import Storage
@@ -99,12 +99,24 @@ def print_form(
     ] = "one-sided",
     pages: Annotated[str | None, Form(description="PDF only, e.g. 1-3,5; empty for all", examples=[""])] = None,
     dry_run: Annotated[bool, Form(description="Validate with the printer without printing")] = False,
+    test_page: Annotated[bool, Form(description="Print a freshly generated test page instead of a file")] = False,
 ) -> dict[str, Any]:
     return {"copies": copies, "media": media or None, "color_mode": color_mode, "quality": quality,
-            "scaling": scaling, "sides": sides, "pages": pages or None, "dry_run": dry_run}
+            "scaling": scaling, "sides": sides, "pages": pages or None, "dry_run": dry_run, "test_page": test_page}
 
 
 PrintForm = Annotated[dict[str, Any], Depends(print_form)]
+
+
+async def _document(file: UploadFile | None, form: dict[str, Any]) -> tuple[bytes | None, str]:
+    """The uploaded file, or (None, name) when the request asks for a test page instead."""
+    if form["test_page"]:
+        if file is not None and file.filename:
+            raise HTTPException(400, "send either a file or test_page=true, not both")
+        return None, "test-page.pdf"
+    if file is None or not file.filename:
+        raise HTTPException(400, "a file is required unless test_page=true")
+    return await _read_upload(file), file.filename
 
 
 # --- auth ----------------------------------------------------------------------
@@ -147,14 +159,23 @@ async def printer_capabilities():
     return await _printer_call(printer.capabilities())
 
 
+@api.get("/test-page", response_class=RawResponse, responses={200: {"content": {"application/pdf": {}}}})
+async def test_page_preview():
+    """The maintenance test page as it would print right now: printer info, time, every ink."""
+    data = await testpage.generate(printer, settings)
+    return RawResponse(data, media_type="application/pdf", headers={"Content-Disposition": 'inline; filename="test-page.pdf"'})
+
+
 @api.post("/print", status_code=202)
 async def print_file(
-    file: Annotated[UploadFile, File(description="PDF or image (JPEG, PNG, HEIC, ...)")],
     form: PrintForm,
+    file: Annotated[UploadFile | None, File(description="PDF or image (JPEG, PNG, HEIC, ...); omit with test_page=true")] = None,
 ):
-    data = await _read_upload(file)
+    data, filename = await _document(file, form)
+    if data is None:
+        data, filename = await testpage.generate(printer, settings), testpage.filename(testpage.now(settings))
     try:
-        job = await build_job(data, file.filename or "upload", form, settings.jpeg_quality)
+        job = await build_job(data, filename, form, settings.jpeg_quality)
     except convert.UnsupportedFile as exc:
         raise HTTPException(400, str(exc)) from exc
     return jobs.submit(job).to_dict()
@@ -188,7 +209,6 @@ async def cancel_job(job_id: str):
 
 @api.post("/print-schedule", status_code=201)
 async def create_schedule(
-    file: Annotated[UploadFile, File(description="PDF or image to print on schedule")],
     form: PrintForm,
     kind: Annotated[Literal["once", "cron"], Form(description="once = at run_at; cron = repeat on the cron expression")],
     name: Annotated[str, Form(examples=[""])] = "",
@@ -198,13 +218,17 @@ async def create_schedule(
                               examples=[""])] = "",
     timezone: Annotated[str, Form(description=f"IANA name; default {settings.default_timezone}",
                                   examples=[settings.default_timezone])] = "",
+    file: Annotated[UploadFile | None, File(description="PDF or image to print on schedule; omit with test_page=true")] = None,
 ):
-    """Store a document and print it once or on a repeating cron schedule."""
-    data = await _read_upload(file)
+    """Store a document and print it once or on a repeating cron schedule.
+
+    With test_page=true nothing is stored: a fresh test page is generated at every run.
+    """
+    data, filename = await _document(file, form)
     try:
         schedule = await schedules.create(
             name=name, kind=kind, run_at=run_at, cron=cron, timezone=timezone or None,
-            data=data, filename=file.filename or "upload", form=form,
+            data=data, filename=filename, form=form,
         )
     except (ScheduleError, convert.UnsupportedFile) as exc:
         raise HTTPException(400, str(exc)) from exc

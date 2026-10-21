@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from croniter import croniter
 from sqlalchemy import select
 
-from . import convert
+from . import convert, testpage
 from .config import Settings
 from .db import PrintSchedule, Storage, new_id, now_utc
 from .jobs import JobManager, build_job
@@ -105,8 +105,9 @@ class ScheduleService:
 
     async def create(
         self, *, name: str, kind: Kind, run_at: str | None, cron: str | None, timezone: str | None,
-        data: bytes, filename: str, form: dict[str, Any],
+        data: bytes | None, filename: str, form: dict[str, Any],
     ) -> PrintSchedule:
+        """`data` is None for a test-page schedule: the page is generated fresh at each run."""
         tz = timezone or self.settings.default_timezone
         zone(tz)
         now = now_utc()
@@ -116,11 +117,14 @@ class ScheduleService:
             cron = validate_cron(cron)
             when = next_cron_run(cron, tz, now)
         # Fail now, not at 3 a.m., if the document or options can't be printed.
-        await build_job(data, filename, form, self.settings.jpeg_quality)
+        sample = data if data is not None else await asyncio.to_thread(testpage.render, None, now, "")
+        await build_job(sample, filename, form, self.settings.jpeg_quality)
 
         schedule_id = new_id()
-        relative = f"files/schedules/{schedule_id}{PurePath(filename).suffix.lower()[:10]}"
-        await asyncio.to_thread(self.storage.path(relative).write_bytes, data)
+        relative = ""
+        if data is not None:
+            relative = f"files/schedules/{schedule_id}{PurePath(filename).suffix.lower()[:10]}"
+            await asyncio.to_thread(self.storage.path(relative).write_bytes, data)
         schedule = PrintSchedule(
             id=schedule_id, name=name or filename, kind=kind, run_at=when if kind == "once" else None,
             cron=cron, timezone=tz, enabled=True, next_run_at=when,
@@ -189,8 +193,13 @@ class ScheduleService:
     async def _submit(self, schedule: PrintSchedule, now: datetime) -> None:
         schedule.last_run_at = now
         try:
-            data = await asyncio.to_thread(self.storage.path(schedule.file_path).read_bytes)
-            job = await build_job(data, schedule.filename, schedule.options, self.settings.jpeg_quality)
+            if schedule.options.get("test_page"):
+                data = await testpage.generate(self.jobs.printer, self.settings)
+                filename = testpage.filename(testpage.now(self.settings))
+            else:
+                data = await asyncio.to_thread(self.storage.path(schedule.file_path).read_bytes)
+                filename = schedule.filename
+            job = await build_job(data, filename, schedule.options, self.settings.jpeg_quality)
             self.jobs.submit(job)
             schedule.last_status, schedule.last_error, schedule.last_job_id = "submitted", None, job.id
             log.info("schedule %s (%s) submitted print job %s", schedule.id, schedule.name, job.id)

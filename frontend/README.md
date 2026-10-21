@@ -19,8 +19,7 @@ Set `API_TARGET=http://localhost:8001` if the backend runs elsewhere. Start the 
 | `src/lib/format.ts` | Chinese labels: paper sizes, states, cron text, translated error messages |
 | `src/hooks/use-poll.ts` | polling that pauses in background tabs and speeds up while work is running |
 | `src/pages/` | 首頁, 列印, 掃描, 排程, and the login screen |
-| `public/nozzle-check.pdf` | the colour test page used by the weekly nozzle-check template |
-| `scripts/gen-assets.py` | regenerates the icons and the test page (`uv run --project ../backend python scripts/gen-assets.py public`) |
+| `scripts/gen-assets.py` | regenerates the icons (`uv run --project ../backend python scripts/gen-assets.py public`) |
 | `nginx.conf` | serves the build and proxies `/api/` to the backend in Docker |
 
 UX background: [user stories](../docs/ux/user-stories.md) and [CUJs](../docs/ux/cuj.md).

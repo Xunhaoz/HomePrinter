@@ -60,6 +60,7 @@ The full specification, with response shapes and error codes, is in [docs/api.md
 | `GET /printer` | state and ink levels |
 | `GET /printer/capabilities` | media, color modes, qualities, scaling, duplex modes |
 | `POST /print` | multipart upload, returns a job (202) |
+| `GET /test-page` | preview the maintenance test page as it would print now |
 | `GET /jobs`, `GET /jobs/{id}` | job status and `pages_done` / `pages_total` |
 | `DELETE /jobs/{id}` | cancel |
 | `POST /print-schedule` | store a document and print it once or on a cron schedule (201) |
@@ -77,7 +78,8 @@ The full specification, with response shapes and error codes, is in [docs/api.md
 
 | field | values |
 |---|---|
-| `file` | PDF or image |
+| `file` | PDF or image; leave out with `test_page` |
+| `test_page` | `true` prints a test page generated on the spot instead: the time, printer info and ink levels, plus solid bands, fine lines and gradients in every ink to keep the print head from clogging |
 | `copies` | 1-99 |
 | `media` | e.g. `iso_a4_210x297mm`, `na_index-4x6_4x6in` (default: the printer's) |
 | `color_mode` | `auto`, `color`, `monochrome` (monochrome PDFs are sent as grayscale) |
@@ -106,6 +108,7 @@ Print jobs are kept in memory and lost on restart; schedules and scans are in th
 | `timezone` | IANA name, default `DEFAULT_TIMEZONE` |
 | `name` | optional label |
 
+A `test_page=true` schedule stores no document; it generates a fresh test page at every run.
 The document and options are checked when the schedule is created, so a bad file fails then,
 not at 3 a.m. When a schedule is due (checked every 30 s) it submits a normal print job;
 `last_status` and `last_job` show what happened. A one-time schedule disables itself after it

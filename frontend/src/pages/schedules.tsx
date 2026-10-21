@@ -25,7 +25,7 @@ const LAST_STATUS = {
 export function SchedulesPage() {
   const schedules = usePoll(api.schedules, 60000)
   const list = schedules.data ?? []
-  const hasNozzle = list.some((s) => s.filename === "nozzle-check.pdf")
+  const hasNozzle = list.some((s) => s.options.test_page)
 
   return (
     <div className="space-y-6">
@@ -52,7 +52,7 @@ export function SchedulesPage() {
           </div>
           <div className="min-w-0 flex-1">
             <p className="font-medium">每週噴頭保養</p>
-            <p className="text-sm text-muted-foreground">每週六 10:00 印一張彩色測試頁，避免墨水乾掉堵塞噴頭</p>
+            <p className="text-sm text-muted-foreground">每週六 10:00 印一張測試頁，用到每一色墨水，避免噴頭乾掉堵塞</p>
           </div>
           <PlusIcon className="size-5 text-muted-foreground" />
         </a>
@@ -83,6 +83,7 @@ function ScheduleCard({ schedule: s, onChange }: { schedule: Schedule; onChange:
   const [busy, setBusy] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const oneShotDone = s.kind === "once" && !s.enabled && !!s.last_run_at
+  const source = s.options.test_page ? "測試頁（每次重新產生）" : s.filename
 
   async function act(action: () => Promise<unknown>, success?: string) {
     setBusy(true)
@@ -109,10 +110,10 @@ function ScheduleCard({ schedule: s, onChange }: { schedule: Schedule; onChange:
     <div className="rounded-xl border bg-card p-4">
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <p className="truncate font-medium">{s.name || s.filename}</p>
+          <p className="truncate font-medium">{s.name || source}</p>
           <p className="mt-0.5 text-sm">{describeSchedule(s)}</p>
           <p className="mt-1 truncate text-xs text-muted-foreground">
-            {s.name ? `${s.filename}${options ? " · " : ""}` : ""}{options}
+            {s.name ? `${source}${options ? " · " : ""}` : ""}{options}
           </p>
         </div>
         {!oneShotDone && (
@@ -164,7 +165,9 @@ function ScheduleCard({ schedule: s, onChange }: { schedule: Schedule; onChange:
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>刪除這個排程？</AlertDialogTitle>
-            <AlertDialogDescription>排程和它保存的檔案「{s.filename}」都會刪除。</AlertDialogDescription>
+            <AlertDialogDescription>
+              {s.options.test_page ? "之後不會再自動列印測試頁。" : `排程和它保存的檔案「${s.filename}」都會刪除。`}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>

@@ -141,7 +141,8 @@ ID 都是隨機的 hex 字串，無法猜測。列印工作 ID 為 12 碼，排�
 
 | 欄位 | 型別 | 預設 | 說明 |
 |---|---|---|---|
-| `file` | file | **必填** | PDF 或圖片（JPEG、PNG、HEIC……） |
+| `file` | file | 二選一 | PDF 或圖片（JPEG、PNG、HEIC……）。`test_page=true` 時不要帶 |
+| `test_page` | bool | `false` | 不上傳檔案，改為列印當下即時產生的[測試頁](#測試頁)。和 `file` 只能擇一，兩個都帶或都沒帶都會回 `400` |
 | `copies` | int 1–99 | `1` | 份數 |
 | `media` | string | 印表機預設 | 紙張，例如 `iso_a4_210x297mm`、`na_index-4x6_4x6in` |
 | `color_mode` | `auto` \| `color` \| `monochrome` | 印表機預設 | 黑白的 PDF 會以灰階送出 |
@@ -152,6 +153,20 @@ ID 都是隨機的 hex 字串，無法猜測。列印工作 ID 為 12 碼，排�
 | `dry_run` | bool | `false` | 轉檔後向印表機驗證，但不實際列印 |
 
 回應是一個 Job 物件，見下文。錯誤：`400` 表示檔案或選項不合法，`413` 表示檔案太大。
+
+### 測試頁
+
+`test_page=true` 會在送出當下產生一頁 A4 PDF（[testpage.py](../backend/src/homeprinter/testpage.py)），內容包括：
+
+- 列印時間（`DEFAULT_TIMEZONE`，預設 Asia/Taipei）、印表機位址、型號、狀態、狀態訊息、紙匣、列印前的墨水量
+- 青、洋紅、黃、黑四色實心色塊，以及紅綠藍雙色混色塊（每色約佔頁面 8%），讓每色墨水都流過噴頭
+- 四色細線與漸層，用來檢查噴嘴是否堵塞
+
+取不到印表機狀態時仍然會產生，資訊欄改成顯示「無法取得印表機資訊」。Job 的 `filename` 為 `test-page-YYYYMMDD-HHMM.pdf`。測試頁是 PDF，所以雙面、頁碼等 PDF 選項都適用；要讓彩色墨水都用到，請不要選 `color_mode=monochrome`。
+
+### `GET /test-page`
+
+回傳現在會印出的測試頁（`application/pdf`，`inline`），用來預覽。
 
 ### Job 物件
 
@@ -212,6 +227,8 @@ ID 都是隨機的 hex 字串，無法猜測。列印工作 ID 為 12 碼，排�
 | `name` | string | 顯示名稱 |
 
 文件和選項在建立排程時就會驗證。錯誤：`400`。
+
+`test_page=true` 的排程不會保存任何檔案：每次執行時才重新產生測試頁，所以上面的時間和墨水量都是執行當下的。這種排程的 `filename` 是 `test-page.pdf`，`options.test_page` 為 `true`。
 
 ### Schedule 物件
 

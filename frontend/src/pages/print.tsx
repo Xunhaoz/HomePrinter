@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import {
-  CalendarClockIcon, FileTextIcon, ImageIcon, Loader2Icon, MinusIcon, PlusIcon, PrinterIcon, RepeatIcon,
+  CalendarClockIcon, DropletsIcon, EyeIcon, FileTextIcon, ImageIcon, Loader2Icon, MinusIcon, PlusIcon, PrinterIcon, RepeatIcon,
   SparklesIcon, UploadIcon, XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -76,8 +76,10 @@ export function PrintPage({ route }: { route: Route }) {
   })()
 
   const [file, setFile] = useState<File | null>(null)
+  // Instead of a file: a test page the backend generates when it prints (printer info, time, every ink).
+  const [testPage, setTestPage] = useState(false)
   const [preview, setPreview] = useState<string>()
-  const kind: Kind | null = file ? kindOf(file) : null
+  const kind: Kind | null = testPage ? "pdf" : file ? kindOf(file) : null
 
   const [copies, setCopies] = useState(1)
   const [media, setMedia] = useState(A4)
@@ -130,22 +132,15 @@ export function PrintPage({ route }: { route: Route }) {
     return () => URL.revokeObjectURL(url)
   }, [file])
 
-  // The nozzle-check template from the schedules page.
+  // The weekly nozzle-check template from the schedules page.
   useEffect(() => {
     if (route.params.get("template") !== "nozzle") return
-    fetch("/nozzle-check.pdf")
-      .then((r) => r.blob())
-      .then((blob) => {
-        setFile(new File([blob], "nozzle-check.pdf", { type: "application/pdf" }))
-        setMode("cron")
-        setName("噴頭保養")
-        setRepeat("weekly")
-        setWeekdays([6])
-        setTime("10:00")
-        setColor("color")
-        setSides("one-sided")
-      })
-      .catch(() => toast.error("載入測試頁失敗"))
+    chooseTestPage()
+    setMode("cron")
+    setName("噴頭保養")
+    setRepeat("weekly")
+    setWeekdays([6])
+    setTime("10:00")
   }, [route.params])
 
   const mediaOptions = useMemo(() => {
@@ -159,9 +154,21 @@ export function PrintPage({ route }: { route: Route }) {
   function pickFile(next: File | undefined) {
     if (!next) return
     setFile(next)
+    setTestPage(false)
     setError("")
     setJobId(undefined)
     if (kindOf(next) === "image") setPages("")
+  }
+
+  // The test page is one colourful page: print it in colour so every ink is used.
+  function chooseTestPage() {
+    setTestPage(true)
+    setFile(null)
+    setColor("color")
+    setSides("one-sided")
+    setPages("")
+    setError("")
+    setJobId(undefined)
   }
 
   function usePhotoPaper() {
@@ -174,7 +181,7 @@ export function PrintPage({ route }: { route: Route }) {
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if (!file || !kind) return
+    if ((!file && !testPage) || !kind) return
     setSubmitting(true)
     setError("")
     const options: PrintOptions = {
@@ -183,14 +190,15 @@ export function PrintPage({ route }: { route: Route }) {
       color_mode: color,
       quality,
       scaling,
-      sides: kind === "pdf" ? sides : "one-sided",
-      pages: kind === "pdf" ? pages.trim() : null,
+      sides: kind === "pdf" && !testPage ? sides : "one-sided",
+      pages: kind === "pdf" && !testPage ? pages.trim() : null,
       dry_run: dryRun,
+      test_page: testPage,
     }
-    savePrefs({ sides, color })
+    if (!testPage) savePrefs({ sides, color })
     try {
       if (mode === "now") {
-        const job = await api.print(file, options)
+        const job = await api.print(testPage ? null : file, options)
         setJobId(job.id)
         window.scrollTo({ top: 0, behavior: "smooth" })
         toast.success(dryRun ? "試印檢查中" : "已送出列印")
@@ -201,7 +209,7 @@ export function PrintPage({ route }: { route: Route }) {
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           ...(mode === "once" ? { run_at: runAt } : { cron: buildCron(repeat, time, weekdays, dayOfMonth, customCron) }),
         }
-        await api.createSchedule(file, options, schedule)
+        await api.createSchedule(testPage ? null : file, options, schedule)
         toast.success("排程已建立")
         navigate("/schedules")
       }
@@ -234,7 +242,27 @@ export function PrintPage({ route }: { route: Route }) {
               e.target.value = ""
             }}
           />
-          {file ? (
+          {testPage ? (
+            <Card className="py-0">
+              <CardContent className="flex items-center gap-3 py-3.5">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-sky-500/12 text-sky-600">
+                  <DropletsIcon className="size-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">測試頁</p>
+                  <p className="text-xs text-muted-foreground">列印時才產生：印表機資訊、台北時間、各色墨水</p>
+                </div>
+                <Button asChild variant="ghost" size="icon-lg" aria-label="預覽測試頁">
+                  <a href={api.testPageUrl} target="_blank" rel="noreferrer">
+                    <EyeIcon />
+                  </a>
+                </Button>
+                <Button type="button" variant="ghost" size="icon-lg" aria-label="不用測試頁" onClick={() => setTestPage(false)}>
+                  <XIcon />
+                </Button>
+              </CardContent>
+            </Card>
+          ) : file ? (
             <Card className="overflow-hidden py-0">
               {preview && (
                 <div className="flex max-h-72 items-center justify-center bg-muted">
@@ -274,10 +302,25 @@ export function PrintPage({ route }: { route: Route }) {
               </div>
             </button>
           )}
+          {!testPage && (
+            <button
+              type="button"
+              onClick={chooseTestPage}
+              className="flex w-full items-center gap-3 rounded-xl border bg-card p-3.5 text-left transition-colors hover:bg-muted/50 active:bg-muted"
+            >
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-sky-500/12 text-sky-600">
+                <DropletsIcon className="size-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-medium">使用測試頁</p>
+                <p className="text-xs text-muted-foreground">印出印表機資訊和時間，並用到每一色墨水，防止噴頭堵塞</p>
+              </div>
+            </button>
+          )}
         </div>
 
         {/* Options */}
-        <div className={cn("space-y-6", !file && "pointer-events-none opacity-50")} aria-disabled={!file}>
+        <div className={cn("space-y-6", !file && !testPage && "pointer-events-none opacity-50")} aria-disabled={!file && !testPage}>
           <Card>
             <CardContent className="space-y-5">
               <Field label="紙張" htmlFor="media">
@@ -326,7 +369,7 @@ export function PrintPage({ route }: { route: Route }) {
                 </div>
               </div>
 
-              <Field label="色彩">
+              <Field label="色彩" hint={testPage && color === "monochrome" ? "測試頁建議用彩色，才會用到每一色墨水" : undefined}>
                 <Segmented
                   label="色彩"
                   value={color}
@@ -339,7 +382,7 @@ export function PrintPage({ route }: { route: Route }) {
                 />
               </Field>
 
-              {kind !== "image" && (
+              {kind !== "image" && !testPage && (
                 <>
                   <Field label="雙面">
                     <Segmented
@@ -524,7 +567,7 @@ export function PrintPage({ route }: { route: Route }) {
             <Button
               type="submit"
               className="h-12 w-full text-base shadow-lg lg:shadow-none"
-              disabled={!file || submitting || (mode === "cron" && repeat === "weekly" && weekdays.length === 0)}
+              disabled={(!file && !testPage) || submitting || (mode === "cron" && repeat === "weekly" && weekdays.length === 0)}
             >
               {submitting ? <Loader2Icon className="animate-spin" /> : mode === "now" ? <PrinterIcon /> : <CalendarClockIcon />}
               {submitting ? "上傳中…" : mode === "now" ? (dryRun ? "試印檢查" : copies > 1 ? `列印 ${copies} 份` : "列印") : "建立排程"}
