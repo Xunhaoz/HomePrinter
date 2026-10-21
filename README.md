@@ -16,9 +16,20 @@ cp .env.example .env     # then set ACCESS_CODE, e.g. six letters
 docker compose up -d --build
 ```
 
-The app is at `http://<this machine>:8088` (`WEB_PORT`). The `web` container serves the app and
-forwards `/api/*` to the `backend` container, which isn't published on its own. API docs are at
-`/api/docs`.
+The app is at `http://<this machine>:8088` (`WEB_PORT`); from an iPhone on the same Wi-Fi use the
+machine's LAN IP. In Safari, Share → Add to Home Screen makes it open like an app. The `web`
+container serves the app and forwards `/api/*` to the `backend` container, which isn't published
+on its own. API docs are at `/api/docs`.
+
+```bash
+docker compose logs -f   # follow both containers' logs
+docker compose down      # stop; add -v to also delete the database and stored files
+```
+
+Upgrading from the single-container version (one `homeprinter` service on port 8000)? Add
+`--remove-orphans` once, so the old container is stopped and port 8000 freed:
+`docker compose up -d --build --remove-orphans`. The data volume keeps its name, so schedules and
+scans carry over.
 
 | `.env` | default | |
 |---|---|---|
@@ -44,3 +55,7 @@ minutes. `/api/docs` itself is public but shows only the API's shape.
 cd backend && ACCESS_CODE=kitten uv run homeprinter     # :8000
 cd frontend && npm install && npm run dev                # :5173
 ```
+
+Open `http://localhost:5173`; Vite forwards `/api` to the backend on port 8000. Stop the Docker
+version first (`docker compose down`), or start the backend with `PORT=8001` and the frontend with
+`API_TARGET=http://localhost:8001 npm run dev`.
